@@ -3,6 +3,7 @@ import httpx
 import json
 import asyncio
 import psycopg2
+import shutil
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import HTMLResponse
@@ -11,27 +12,27 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# --- 設定區 ---
-HUME_API_KEY = "YRolQS4LUtijkq8V89lMsneS1PGgRZYdXlf3T64ELG73z1fa"
+# --- 1. 設定區 ---
+HUME_API_KEY = "YRolQS4LUtijkq8V89lMsneS1PGgRZYdXlf3T64ELG73z1fa" 
 BASE_PATH = Path(r"D:\工作\CODE\python\Moodanaly-project")
 IMAGE_DIR = BASE_PATH / "testhumiai"
-IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR = IMAGE_DIR / "result"
-BATCH_URL = "https://api.hume.ai/v1/batch/jobs"
+BATCH_URL = "https://api.hume.ai/v0/batch/jobs" 
 
-# 資料庫連線設定 (請確認您的 PostgreSQL 資訊)
+# PostgreSQL 設定
 DB_CONFIG = {
-    "dbname": "postgres", # 您的資料庫名稱
-    "user": "s1122",      # 您的 User ID
-    "password": "s1122",  # 您的 Password
+    "dbname": "Moodanaly-project",
+    "user": "postgres",
+    "password": "0",
     "host": "127.0.0.1",
     "port": "5432"
 }
 
 # 確保目錄存在
+IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
-# CORS 設定
+# CORS 設定：允許手機 ngrok 請求[cite: 1]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -40,51 +41,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 掛載靜態圖片資料夾
+# 掛載靜態檔案
 app.mount("/images", StaticFiles(directory=str(IMAGE_DIR)), name="images")
 
-# --- 路由區 ---
+# --- 2. 資料庫核心函式 ---
 
-@app.get("/", response_class=HTMLResponse)
-async def get_index():
-    """回傳 LIFF 前端網頁，解決 Not Found 問題"""
-    with open("index.html", "r", encoding="utf-8") as f:
-        return f.read()
-@app.get("/test2", response_class=HTMLResponse)
-async def get_second_page():
-    """當使用者進入 /test2 網址時"""
-    with open("test2.html", "r", encoding="utf-8") as f:
-        return f.read()
-
-@app.post("/api/upload")
-async def handle_upload(file: UploadFile = File(...), test_id: str = Form(...)):
-    # 建立完整的檔案存檔路徑
-    file_path = IMAGE_DIR / file.filename
-    
+def save_to_postgres(test_id, emotions_dict):
+    """
+    將結果寫入 PostgreSQL
+    :param emotions_dict: 傳入格式為 {'Interest': 0.54, 'Calmness': 0.42}
+    """
     try:
-        # 使用 async 讀取檔案內容
-        contents = await file.read()
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
         
-        # 執行實體寫入
-        with open(file_path, "wb") as f:
-            f.write(contents)
+        # 存入 test_name 與 JSON 格式的字典
+        query = "INSERT INTO emotion_logs (test_name, detected_emotions) VALUES (%s, %s)"
+        cur.execute(query, (test_id, json.dumps(emotions_dict)))
         
-        print(f"📸 照片已成功存檔至: {file_path}")
+        conn.commit()
         
-        # 執行後續的 Hume AI 分析流程[cite: 1]
-        asyncio.create_task(process_hume_ai(file_path, test_id))
+        # 除錯用：印出當前筆數確認真的有存入
+        cur.execute("SELECT COUNT(*) FROM emotion_logs;")
+        count = cur.fetchone()[0]
         
-        return {"status": "success", "path": str(file_path)}
-        
+        cur.close()
+        conn.close()
+        print(f"🗄️ 資料庫已更新！總筆數: {count}")
     except Exception as e:
-        print(f"❌ 存檔失敗: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ 資料庫寫入失敗: {e}")
 
-# --- 核心邏輯區 ---
+# --- 3. 核心邏輯區 ---
 
 async def process_hume_ai(file_path, test_id):
+    """分析情緒並過濾前五名 > 40% 的結果"""
     async with httpx.AsyncClient(timeout=None) as client:
-        # A. 建立 Hume AI 任務[cite: 3]
+        # A. 建立 Hume AI 任務
         headers = {"X-Hume-Api-Key": HUME_API_KEY}
         payload = {"models": {"face": {}}}
         
@@ -103,55 +95,85 @@ async def process_hume_ai(file_path, test_id):
 
         job_id = response.json().get("job_id")
         
-        # B. 等待結果完成 (輪詢)[cite: 3]
+        # B. 輪詢狀態 (Polling)
         status_url = f"{BATCH_URL}/{job_id}"
         while True:
             res = await client.get(status_url, headers=headers)
             status = res.json().get("state", {}).get("status")
             if status == "COMPLETED": break
             if status in ["FAILED", "CANCELLED"]: return
-            await asyncio.sleep(2) # 圖片較快，間隔縮短
+            await asyncio.sleep(2) 
 
-        # C. 下載預測結果[cite: 3]
+        # C. 解析結果
         pred_url = f"{BATCH_URL}/{job_id}/predictions"
-        pred_res = await client.get(pred_url, headers=headers)
+        pred_res = await client.get(pred_url, headers={"X-Hume-Api-Key": HUME_API_KEY})
         if pred_res.status_code == 200:
             results = pred_res.json()
+            emotions = results[0]["results"]["predictions"][0]["models"]["face"]["grouped_predictions"][0]["predictions"][0]["emotions"]
             
-            # 儲存 JSON 檔
-            result_path = RESULT_DIR / f"{file_path.stem}_result.json"
-            with open(result_path, "w", encoding="utf-8") as f:
-                json.dump(results, f, indent=4, ensure_ascii=False)
+            # 1. 先取前五名
+            sorted_all = sorted(emotions, key=lambda x: x['score'], reverse=True)
+            top_five = sorted_all[:5]
+            
+            # 2. 檢查是否有超過 40% 的
+            top_filtered = [e for e in top_five if e["score"] >= 0.4]
 
-            # D. 解析情緒：取前五名，並判斷是否 > 40% (0.4)
-            try:
-                emotions = results[0]["results"]["predictions"][0]["models"]["face"]["grouped_predictions"][0]["predictions"][0]["emotions"]
-                # 排序
-                sorted_emotions = sorted(emotions, key=lambda x: x["score"], reverse=True)[:5]
-                # 過濾超過 40%
-                filtered = [e["name"] for e in sorted_emotions if e["score"] >= 0.4]
-                
-                if filtered:
-                    save_to_postgres(test_id, filtered)
-                    print(f"✅ {test_id} 辨識成功，存入情緒: {filtered}")
-            except Exception as e:
-                print(f"⚠️ 解析 JSON 失敗: {e}")
+            if top_filtered:
+                # 情況 A：有機率 > 40%，直接存入
+                filtered_data = {e["name"]: round(e["score"], 4) for e in top_filtered}
+                save_to_postgres(test_id, filtered_data)
+                return {"status": "success", "action": "auto_saved", "data": filtered_data}
+            else:
+                # 情況 B：全都 < 40%，回傳前五名給前端讓使用者選
+                options = {e["name"]: round(e["score"], 4) for e in top_five}
+                return {"status": "low_confidence", "action": "user_selection_required", "options": options}
 
-def save_to_postgres(test_id, emotions_list):
-    """將結果寫入 PostgreSQL"""
+
+
+# --- 4. 路由區 ---
+
+@app.post("/api/save_manual")
+async def save_manual(
+    test_id: str = Form(...), 
+    selected_emotion: str = Form(...), 
+    score: float = Form(...)
+):
+    """接收使用者從手機端手動選擇的情緒結果並存入資料庫"""
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        # 假設您的 table 叫 emotion_logs，欄位有 test_name, detected_emotions
-        cur.execute(
-            "INSERT INTO emotion_logs (test_name, detected_emotions, created_at) VALUES (%s, %s, NOW())",
-            (test_id, json.dumps(emotions_list))
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
+        # 將單一情緒與分數封裝成字典格式，以符合 JSONB 存儲規範
+        manual_data = {selected_emotion: score}
+        save_to_postgres(test_id, manual_data)
+        return {"status": "success", "message": "手動選擇已存入資料庫"}
     except Exception as e:
-        print(f"❌ 資料庫寫入失敗: {e}")
+        print(f"❌ 手動存檔路由發生錯誤: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.get("/", response_class=HTMLResponse)
+async def get_index():
+    with open("index.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+@app.post("/api/upload")
+async def handle_upload(file: UploadFile = File(...), test_id: str = Form(...)):
+    """修改為：等待分析完成後直接回傳結果，不再使用背景任務"""
+    file_path = IMAGE_DIR / file.filename
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # 關鍵：直接 await 取得結果，這樣 result 才能回傳給前端
+        result = await process_hume_ai(file_path, test_id)
+        
+        if result:
+            return result
+        else:
+            return {"status": "error", "message": "分析失敗"}
+            
+    except Exception as e:
+        print(f"❌ 處理失敗: {e}")
+        return {"status": "error", "message": str(e)}
+
+# process_hume_ai 函式內容保持你最後提供的版本即可
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,24 +1,58 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>情緒辨識測試</title>
     <style>
-        body { font-family: sans-serif; background-color: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
-        #video-container { position: relative; width: 100%; max-width: 400px; border: 3px solid #FFFF00; border-radius: 12px; overflow: hidden; }
-        video { width: 100%; display: block; transform: scaleX(-1); /* 鏡像效果 */ }
-        .btn-start { background-color: #00AFFF; color: black; border: none; padding: 15px 30px; font-size: 1.2em; font-weight: bold; border-radius: 8px; cursor: pointer; margin-top: 20px; }
-        #status { margin-top: 15px; color: #FFFF00; font-weight: bold; }
-        canvas { display: none; }
+      body {
+        font-family: sans-serif;
+        background-color: #1a1a1a;
+        color: white;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+      }
+      #video-container {
+        position: relative;
+        width: 100%;
+        max-width: 400px;
+        border: 3px solid #ffff00;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      video {
+        width: 100%;
+        display: block;
+        transform: scaleX(-1); /* 鏡像效果 */
+      }
+      .btn-start {
+        background-color: #00afff;
+        color: black;
+        border: none;
+        padding: 15px 30px;
+        font-size: 1.2em;
+        font-weight: bold;
+        border-radius: 8px;
+        cursor: pointer;
+        margin-top: 20px;
+      }
+      #status {
+        margin-top: 15px;
+        color: #ffff00;
+        font-weight: bold;
+      }
+      canvas {
+        display: none;
+      }
     </style>
-</head>
-<body>
-
+  </head>
+  <body>
     <h2>情緒感測測試系統</h2>
-    
+
     <div id="video-container">
-        <video id="video" autoplay playsinline></video>
+      <video id="video" autoplay playsinline></video>
     </div>
 
     <button id="startBtn" class="btn-start">開始測試 (10秒流程)</button>
@@ -28,93 +62,103 @@
     <canvas id="canvas"></canvas>
 
     <script>
-        let testCount = 1; // 這是 test {i} 的 i，可由後端回傳或自行累計
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const startBtn = document.getElementById('startBtn');
-        const status = document.getElementById('status');
+      let testCount = 1; // 這是 test {i} 的 i，可由後端回傳或自行累計
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const startBtn = document.getElementById("startBtn");
+      const status = document.getElementById("status");
 
-        // 1. 初始化相機 (LIFF 必須透過 HTTPS 才能開啟)
-        async function initCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "user" }, // 強制開啟前鏡頭
-                    audio: false 
-                });
-                video.srcObject = stream;
-            } catch (err) {
-                console.error("相機開啟失敗:", err);
-                status.innerText = "請允許相機權限";
-            }
+      // 1. 初始化相機 (LIFF 必須透過 HTTPS 才能開啟)
+      async function initCamera() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user" }, // 強制開啟前鏡頭
+            audio: false,
+          });
+          video.srcObject = stream;
+        } catch (err) {
+          console.error("相機開啟失敗:", err);
+          status.innerText = "請允許相機權限";
+        }
+      }
+
+      // 2. 執行 10 秒流程 (0s, 4s, 8s 拍照)
+      // 2. 執行流程 (改為 async/await 確保一張選完才拍下一張，或至少不彈窗重疊)
+      async function runEmotionTest() {
+        startBtn.disabled = true;
+        status.innerText = `正在執行 test ${testCount}...`;
+
+        // 改用 for 迴圈配合 await，確保分析順序
+        for (let i = 0; i < 3; i++) {
+          status.innerText = `第 ${i + 1} 次拍照中...`;
+          // 這裡我們直接呼叫並等待
+          await new Promise((resolve) => {
+            captureAndUpload(i + 1, resolve); // 傳入 resolve 讓拍照完能通知下一位
+          });
+
+          // 拍照間隔 4 秒
+          if (i < 2) await new Promise((r) => setTimeout(r, 4000));
         }
 
-        // 2. 執行 10 秒流程 (0s, 4s, 8s 拍照)
-        async function runEmotionTest() {
-            startBtn.disabled = true;
-            status.innerText = `正在執行 test ${testCount}...`;
+        status.innerText = `流程結束`;
+        startBtn.disabled = false;
+        testCount++;
+      }
 
-            // 設定連拍點：0秒, 4秒, 8秒
-            for (let i = 0; i < 3; i++) {
-                setTimeout(() => {
-                    captureAndUpload(i + 1);
-                }, i * 4000);
-            }
-
-            // 10 秒後結束流程
-            setTimeout(() => {
-                status.innerText = `流程結束，等待後端分析...`;
-                startBtn.disabled = false;
-                testCount++; // 次數增加
-            }, 10000);
-        }
-
-        // 3. 截取畫面並透過 API 上傳
-        function captureAndUpload(photoIdx) {
+      // 3. 截取畫面並透過 API 上傳
+      // 傳入 done 回調函數
+        function captureAndUpload(photoIdx, done) { 
             const context = canvas.getContext('2d');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            
-            // 將影像繪製到畫布
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            // 轉為 Blob 並發送
             canvas.toBlob(async (blob) => {
                 const formData = new FormData();
-                // 確保檔名包含 testCount 與 photoIdx，避免手機連拍時覆蓋
                 formData.append('file', blob, `test_${testCount}_${photoIdx}.jpg`);
                 formData.append('test_id', `test ${testCount}`);
 
                 status.innerText = `正在分析第 ${photoIdx} 張照片...`;
-
-                // --- 關鍵修改處 ---
-                // 使用 window.location.origin 會自動根據你目前的網址切換
-                // 電腦開會變 http://127.0.0.1:8000/api/upload
-                // 手機開會變 https://prompter-impending-porthole.ngrok-free.dev/api/upload
                 const uploadUrl = window.location.origin + '/api/upload'; 
 
                 try {
-                    const response = await fetch(uploadUrl, { 
-                        method: 'POST',
-                        body: formData,
-                        // 增加 mode 確保跨網域請求順利
-                        mode: 'cors' 
-                    });
-                    
-                    if (!response.ok) throw new Error(`伺服器回應錯誤: ${response.status}`);
-                    
+                    const response = await fetch(uploadUrl, { method: 'POST', body: formData });
                     const result = await response.json();
-                    console.log(`第 ${photoIdx} 張結果:`, result);
+
+                    if (result.action === "user_selection_required") {
+                        let optionsText = `[第 ${photoIdx} 張] 強度較低，請選擇：\n`;
+                        const keys = Object.keys(result.options);
+                        keys.forEach((name, index) => {
+                            optionsText += `${index + 1}. ${name} (${(result.options[name] * 100).toFixed(1)}%)\n`;
+                        });
+
+                        const choice = prompt(optionsText);
+                        const selectedIndex = parseInt(choice) - 1;
+
+                        if (keys[selectedIndex]) {
+                            const manualData = new FormData();
+                            manualData.append('test_id', `test ${testCount}`);
+                            manualData.append('selected_emotion', keys[selectedIndex]);
+                            manualData.append('score', result.options[keys[selectedIndex]]);
+
+                            await fetch(window.location.origin + '/api/save_manual', { method: 'POST', body: manualData });
+                            status.innerText = `第 ${photoIdx} 張記錄成功`;
+                        }
+                    } else {
+                        status.innerText = `第 ${photoIdx} 張自動存檔完成`;
+                    }
                 } catch (err) {
                     console.error("上傳失敗:", err);
-                    status.innerText = `第 ${photoIdx} 張上傳失敗，請檢查網路`;
+                } finally {
+                    if (done) done(); // 無論成功失敗，告知主流程可以繼續下一次拍照
                 }
             }, 'image/jpeg', 0.8);
         }
 
-        startBtn.addEventListener('click', runEmotionTest);
-        
-        // 進入網頁自動開啟相機
-        initCamera();
+      startBtn.addEventListener("click", runEmotionTest);
+
+      // 進入網頁自動開啟相機
+      initCamera();
     </script>
-</body>
+  </body>
 </html>
