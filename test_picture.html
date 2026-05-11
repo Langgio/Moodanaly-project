@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>test</title>
+    <style>
+        body { font-family: sans-serif; background-color: #1a1a1a; color: white; padding: 20px; margin: 0; }
+        
+        .log-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .card {
+            border-radius: 12px;
+            overflow: hidden;
+            background-color: #2a2a2a;
+            display: flex;
+            flex-direction: column;
+            border: 2px solid #333;
+            transition: transform 0.2s;
+            cursor: pointer; /* 滑鼠移上去顯示手指 */
+        }
+        .card:hover { transform: translateY(-5px); }
+
+        .card-top {
+            background-color: #FFFF00; /* 黃色 */
+            height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card-top img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .card-bottom {
+            background-color: #6ed1ff; /* 藍色 */
+            padding: 15px;
+            color: #000;
+            flex-grow: 1;
+        }
+
+        .card-bottom h3 { margin: 0 0 10px 0; font-size: 1.1em; border-bottom: 1px solid rgba(0,0,0,0.2); }
+        
+        .emotion-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        /* --- 新增：放大圖片的遮罩層樣式 --- */
+        #imageOverlay {
+            display: none; /* 預設隱藏 */
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9); /* 半透明黑色背景 */
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            cursor: zoom-out; /* 提示點擊可縮小 */
+        }
+
+        #expandedImg {
+            max-width: 90%;
+            max-height: 90%;
+            border: 5px solid white;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            cursor: default; /* 圖片本身不顯示縮小指標 */
+        }
+    </style>
+</head>
+<body>
+
+    <h1 style="text-align: center; margin-bottom: 40px;">test</h1>
+    
+    <div class="log-grid" id="logGrid"></div>
+
+    <div id="imageOverlay">
+        <img id="expandedImg" src="" alt="Expanded View">
+    </div>
+
+    <script>
+        const overlay = document.getElementById('imageOverlay');
+        const expandedImg = document.getElementById('expandedImg');
+
+        // 點擊遮罩層（外部區域）就隱藏
+        overlay.addEventListener('click', () => {
+            overlay.style.display = 'none';
+        });
+
+        // 防止點擊圖片本身時也觸發關閉
+        expandedImg.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        async function fetchLogs() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/logs');
+                const data = await response.json();
+                const grid = document.getElementById('logGrid');
+
+                data.forEach(log => {
+                    const card = document.createElement('div');
+                    card.className = 'card';
+
+                    // 點擊卡片時觸發放大 [cite: 24, 29]
+                    card.onclick = () => {
+                        expandedImg.src = `http://127.0.0.1:8000${log.image_url}`;
+                        overlay.style.display = 'flex';
+                    };
+
+                    const emotionHtml = log.emotions && log.emotions.length > 0 
+                        ? log.emotions.map(e => `
+                            <div class="emotion-row">
+                                <span>${e.name}</span>
+                                <span>${(e.score * 100).toFixed(1)}%</span>
+                            </div>
+                        `).join('')
+                        : '<p>未偵測到情緒</p>';
+
+                    card.innerHTML = `
+                        <div class="card-top">
+                            <img src="http://127.0.0.1:8000${log.image_url}" alt="Elderly">
+                        </div>
+                        <div class="card-bottom">
+                            <h3>情緒分析${log.image_url}</h3>
+
+                            ${emotionHtml}
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+            } catch (err) {
+                console.error("無法載入日誌:", err);
+            }
+        }
+
+        fetchLogs();
+    </script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>情緒辨識結果分析儀表板</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans">
+
+    <div class="max-w-6xl mx-auto py-10 px-4">
+        <div class="mb-10 text-center">
+            <h1 class="text-4xl font-bold text-slate-800 mb-2">Hume AI 影片情緒分析報告</h1>
+            <p class="text-slate-500">檔案 ID: 9e7cf2a5-b5e3-46a8-8faf-23a58c8ff637</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <div class="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h2 class="text-xl font-semibold mb-6 flex items-center">
+                    <span class="w-2 h-6 bg-blue-500 rounded-full mr-3"></span>
+                    核心情緒隨時間趨勢 (Time Series)
+                </h2>
+                <div class="relative h-[400px]">
+                    <canvas id="emotionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="space-y-6">
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 class="text-lg font-semibold mb-4 text-slate-700">分析狀態</h2>
+                    <div class="flex items-center text-green-600 font-medium">
+                        <div class="w-3 h-3 bg-green-500 rounded-full mr-2 animate-pulse"></div>
+                        分析完成 (COMPLETED)
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 class="text-lg font-semibold mb-4 text-slate-700">主要偵測情緒 (Peak Scores)</h2>
+                    <div id="topEmotions" class="space-y-4">
+                        </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 模擬從 JSON 提取的數據片段 (根據你提供的內容)
+        const rawData = [
+            { time: 0, emotions: { "Boredom": 0.81, "Calmness": 0.79, "Concentration": 0.65, "Surprise (positive)": 0.02 } },
+            { time: 0.33, emotions: { "Boredos": 0.78, "Calmness": 0.76, "Concentration": 0.61, "Surprise (positive)": 0.02 } },
+            { time: 0.66, emotions: { "Boredom": 0.44, "Calmness": 0.43, "Concentration": 0.51, "Surprise (positive)": 0.11 } },
+            { time: 1.0, emotions: { "Boredom": 0.29, "Calmness": 0.22, "Concentration": 0.28, "Surprise (positive)": 0.36 } },
+            { time: 1.33, emotions: { "Boredom": 0.27, "Calmness": 0.20, "Concentration": 0.25, "Surprise (positive)": 0.38 } }
+        ];
+
+        // 準備圖表數據
+        const labels = rawData.map(d => d.time.toFixed(2) + 's');
+        const boredomData = rawData.map(d => d.emotions["Boredom"]);
+        const calmData = rawData.map(d => d.emotions["Calmness"]);
+        const concentrationData = rawData.map(d => d.emotions["Concentration"]);
+        const surpriseData = rawData.map(d => d.emotions["Surprise (positive)"]);
+
+        const ctx = document.getElementById('emotionChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: '厭倦 (Boredom)', data: boredomData, borderColor: '#6366f1', tension: 0.4, fill: false },
+                    { label: '冷靜 (Calmness)', data: calmData, borderColor: '#10b981', tension: 0.4, fill: false },
+                    { label: '專注 (Concentration)', data: concentrationData, borderColor: '#f59e0b', tension: 0.4, fill: false },
+                    { label: '驚訝 (Surprise+)', data: surpriseData, borderColor: '#ef4444', tension: 0.4, fill: false }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' }
+                },
+                scales: {
+                    y: { beginAtZero: true, max: 1 }
+                }
+            }
+        });
+
+        // 顯示最高分數的情緒
+        const topEmotionsList = [
+            { name: "Boredom (厭倦)", score: "0.81", color: "bg-indigo-100 text-indigo-700" },
+            { name: "Calmness (冷靜)", score: "0.79", color: "bg-emerald-100 text-emerald-700" },
+            { name: "Concentration (專注)", score: "0.65", color: "bg-amber-100 text-amber-700" }
+        ];
+
+        const container = document.getElementById('topEmotions');
+        topEmotionsList.forEach(emo => {
+            container.innerHTML += `
+                <div class="flex items-center justify-between p-3 rounded-xl ${emo.color}">
+                    <span class="font-medium">${emo.name}</span>
+                    <span class="font-bold">${emo.score}</span>
+                </div>
+            `;
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>情緒辨識測試</title>
+    <style>
+        body { font-family: sans-serif; background-color: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        #video-container { position: relative; width: 100%; max-width: 400px; border: 3px solid #FFFF00; border-radius: 12px; overflow: hidden; }
+        video { width: 100%; display: block; transform: scaleX(-1); /* 鏡像效果 */ }
+        .btn-start { background-color: #00AFFF; color: black; border: none; padding: 15px 30px; font-size: 1.2em; font-weight: bold; border-radius: 8px; cursor: pointer; margin-top: 20px; }
+        #status { margin-top: 15px; color: #FFFF00; font-weight: bold; }
+        canvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <h2>情緒感測測試系統</h2>
+    
+    <div id="video-container">
+        <video id="video" autoplay playsinline></video>
+    </div>
+
+    <button id="startBtn" class="btn-start">開始測試 (10秒流程)</button>
+    <div id="status">準備就緒</div>
+
+    <!-- 用於拍照的隱藏畫布 -->
+    <canvas id="canvas"></canvas>
+
+    <script>
+        let testCount = 1; // 這是 test {i} 的 i，可由後端回傳或自行累計
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const startBtn = document.getElementById('startBtn');
+        const status = document.getElementById('status');
+
+        // 1. 初始化相機 (LIFF 必須透過 HTTPS 才能開啟)
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user" }, // 強制開啟前鏡頭
+                    audio: false 
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error("相機開啟失敗:", err);
+                status.innerText = "請允許相機權限";
+            }
+        }
+
+        // 2. 執行 10 秒流程 (0s, 4s, 8s 拍照)
+        async function runEmotionTest() {
+            startBtn.disabled = true;
+            status.innerText = `正在執行 test ${testCount}...`;
+
+            // 設定連拍點：0秒, 4秒, 8秒
+            for (let i = 0; i < 3; i++) {
+                setTimeout(() => {
+                    captureAndUpload(i + 1);
+                }, i * 4000);
+            }
+
+            // 10 秒後結束流程
+            setTimeout(() => {
+                status.innerText = `流程結束，等待後端分析...`;
+                startBtn.disabled = false;
+                testCount++; // 次數增加
+            }, 10000);
+        }
+
+        // 3. 截取畫面並透過 API 上傳
+        function captureAndUpload(photoIdx) {
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // 將影像繪製到畫布
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // 轉為 Blob 並發送
+            canvas.toBlob(async (blob) => {
+                const formData = new FormData();
+                // 確保檔名包含 testCount 與 photoIdx，避免手機連拍時覆蓋
+                formData.append('file', blob, `test_${testCount}_${photoIdx}.jpg`);
+                formData.append('test_id', `test ${testCount}`);
+
+                status.innerText = `正在分析第 ${photoIdx} 張照片...`;
+
+                // --- 關鍵修改處 ---
+                // 使用 window.location.origin 會自動根據你目前的網址切換
+                // 電腦開會變 http://127.0.0.1:8000/api/upload
+                // 手機開會變 https://prompter-impending-porthole.ngrok-free.dev/api/upload
+                const uploadUrl = window.location.origin + '/api/upload'; 
+
+                try {
+                    const response = await fetch(uploadUrl, { 
+                        method: 'POST',
+                        body: formData,
+                        // 增加 mode 確保跨網域請求順利
+                        mode: 'cors' 
+                    });
+                    
+                    if (!response.ok) throw new Error(`伺服器回應錯誤: ${response.status}`);
+                    
+                    const result = await response.json();
+                    console.log(`第 ${photoIdx} 張結果:`, result);
+                } catch (err) {
+                    console.error("上傳失敗:", err);
+                    status.innerText = `第 ${photoIdx} 張上傳失敗，請檢查網路`;
+                }
+            }, 'image/jpeg', 0.8);
+        }
+
+        startBtn.addEventListener('click', runEmotionTest);
+        
+        // 進入網頁自動開啟相機
+        initCamera();
+    </script>
+</body>
+</html>
