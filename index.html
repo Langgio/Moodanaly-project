@@ -5,28 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>情緒辨識測試</title>
     <style>
+      /* --- 全局基礎樣式設定 --- */
       body {
         font-family: sans-serif;
-        background-color: #1a1a1a;
+        background-color: #1a1a1a; /* 深色背景 */
         color: white;
         display: flex;
         flex-direction: column;
         align-items: center;
         padding: 20px;
       }
+      
+      /* --- 影片鏡頭容器與邊框 --- */
       #video-container {
         position: relative;
         width: 100%;
         max-width: 400px;
-        border: 3px solid #ffff00;
+        border: 3px solid #ffff00; /* 黃色高亮邊框 */
         border-radius: 12px;
         overflow: hidden;
       }
+      
+      /* --- 視訊畫面配置 --- */
       video {
         width: 100%;
         display: block;
-        transform: scaleX(-1); /* 鏡像效果 */
+        transform: scaleX(-1); /* 鏡像效果：讓使用者操作時如同照鏡子般直覺 */
       }
+      
+      /* --- 開始測試按鈕樣式 --- */
       .btn-start {
         background-color: #00afff;
         color: black;
@@ -38,17 +45,93 @@
         cursor: pointer;
         margin-top: 20px;
       }
+      
+      /* --- 即時狀態顯示文字 --- */
       #status {
         margin-top: 15px;
         color: #ffff00;
         font-weight: bold;
       }
+      
+      /* --- 隱藏用於截圖的實體畫布 --- */
       canvas {
         display: none;
+      }
+
+      /* --- Heal-Care 醫療科技風格自定義彈窗樣式 --- */
+      .custom-modal {
+        display: none; /* 預設隱藏，由 JS 動態切換 flex 顯示 */
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.4); /* 暗化遮罩背景 */
+        z-index: 9999; /* 確保彈窗層級在最上層 */
+        justify-content: center;
+        align-items: center;
+        backdrop-filter: blur(4px); /* 背景磨砂玻璃模糊質感 */
+      }
+
+      /* --- 彈窗主體白板 --- */
+      .modal-content {
+        background-color: #f5f0e8; /* Heal-Care 標誌性米白色背景 */
+        border-radius: 24px;
+        padding: 30px 20px;
+        width: 90%;
+        max-width: 340px;
+        text-align: center;
+        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.1);
+      }
+
+      /* --- 彈窗標題 --- */
+      .modal-content h3 {
+        color: #1a1a1a;
+        margin-bottom: 20px;
+        font-size: 1.4rem;
+        font-weight: 600;
+      }
+
+      /* --- 膠囊型情緒候選按鈕 --- */
+      .emotion-btn {
+        width: 100%;
+        padding: 14px;
+        margin: 10px 0;
+        background-color: #dfff37; /* Heal-Care 質感亮黃色 */
+        color: #1a1a1a;
+        border: none;
+        border-radius: 40px; /* 完美弧形膠囊圓角 */
+        font-size: 1rem;
+        font-weight: bold;
+        cursor: pointer;
+        box-shadow: 0 4px 10px rgba(223, 255, 55, 0.2);
+        transition: transform 0.1s ease; /* 點擊微動效 */
+      }
+
+      .emotion-btn:active {
+        transform: scale(0.98); /* 點擊縮放反饋 */
+      }
+
+      /* --- 彈窗底部提示小字 --- */
+      .modal-note {
+        color: #7a7a7a;
+        font-size: 0.85rem;
+        margin-top: 15px;
+        line-height: 1.4;
       }
     </style>
   </head>
   <body>
+    <div id="emotionModal" class="custom-modal">
+      <div class="modal-content">
+        <h3>選擇目前的情緒</h3>
+        <div id="emotionButtonsContainer"></div>
+        <p class="modal-note">
+          由於當前偵測強度較低，<br />請手動選擇最符合的狀態以確保紀錄準確。
+        </p>
+      </div>
+    </div>
+
     <h2>情緒感測測試系統</h2>
 
     <div id="video-container">
@@ -58,106 +141,209 @@
     <button id="startBtn" class="btn-start">開始測試 (10秒流程)</button>
     <div id="status">準備就緒</div>
 
-    <!-- 用於拍照的隱藏畫布 -->
     <canvas id="canvas"></canvas>
 
     <script>
-      let testCount = 1; // 這是 test {i} 的 i，可由後端回傳或自行累計
+      // 串接狀態全局變數
+      let testCount = 1; // 代表當前的檢測回合代號 (可映射至資料庫 test_name)
       const video = document.getElementById("video");
       const canvas = document.getElementById("canvas");
       const startBtn = document.getElementById("startBtn");
       const status = document.getElementById("status");
 
-      // 1. 初始化相機 (LIFF 必須透過 HTTPS 才能開啟)
+      /**
+       * 1. 初始化行動裝置或電腦相機
+       * 注意：LINE LIFF 環境必須佈署於 HTTPS 域名環境下，否則瀏覽器安全機制會直接封鎖此 WebRTC 請求
+       */
       async function initCamera() {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "user" }, // 強制開啟前鏡頭
-            audio: false,
+            video: { facingMode: "user" }, // 強制調用前置視訊鏡頭（自拍視角）
+            audio: false,                  // 關閉麥克風，僅抓取影像
           });
           video.srcObject = stream;
         } catch (err) {
           console.error("相機開啟失敗:", err);
-          status.innerText = "請允許相機權限";
+          status.innerText = "請允許相機權限，並確保使用 HTTPS 連線。";
         }
       }
 
-      // 2. 執行 10 秒流程 (0s, 4s, 8s 拍照)
-      // 2. 執行流程 (改為 async/await 確保一張選完才拍下一張，或至少不彈窗重疊)
+      /**
+       * 2. 啟動非同步循環分析排程 (核心商務卡控流程)
+       * 改用 async/await 序列結構，確保前一張照片的低信心度彈窗處理完畢後，才繼續執行下一次定時拍攝，防止彈窗重疊衝突。
+       */
       async function runEmotionTest() {
-        startBtn.disabled = true;
+        startBtn.disabled = true; // 執行期間禁用按鈕，防止重複點擊觸發多重計時器
         status.innerText = `正在執行 test ${testCount}...`;
 
-        // 改用 for 迴圈配合 await，確保分析順序
+        // 循環執行 3 次拍攝程序（對應時序：0秒、4秒、8秒）
         for (let i = 0; i < 3; i++) {
           status.innerText = `第 ${i + 1} 次拍照中...`;
-          // 這裡我們直接呼叫並等待
+          
+          // 使用 Promise 封裝異步任務，等待本輪照片上傳與後端校正程序全部 done() 後才放行
           await new Promise((resolve) => {
-            captureAndUpload(i + 1, resolve); // 傳入 resolve 讓拍照完能通知下一位
+            captureAndUpload(i + 1, resolve);
           });
 
-          // 拍照間隔 4 秒
+          // 如果不是最後一次拍照，則進行異步休眠等待 4 秒，再切入下一個影格拍攝
           if (i < 2) await new Promise((r) => setTimeout(r, 4000));
         }
 
         status.innerText = `流程結束`;
-        startBtn.disabled = false;
-        testCount++;
+        startBtn.disabled = false; // 釋放按鈕狀態
+        testCount++; // 回合數自動累加
       }
 
-      // 3. 截取畫面並透過 API 上傳
-      // 傳入 done 回調函數
-        function captureAndUpload(photoIdx, done) { 
-            const context = canvas.getContext('2d');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      /**
+       * 3. 系統核心情緒英文代碼與繁體中文在地化對照表
+       * 將 Hume AI 產出的科學情緒結構字串映射為高可讀性的中文名稱
+       */
+      const emotionMap = {
+        Admiration: "讚賞",
+        Adoration: "崇拜",
+        "Aesthetic Appreciation": "審美感",
+        Amusement: "愉悅",
+        Anger: "憤怒",
+        Anxiety: "焦慮",
+        Awe: "敬畏",
+        Awkwardness: "尷尬",
+        Boredom: "乏味",
+        Calmness: "冷靜",
+        Concentration: "專專注",
+        Confusion: "困惑",
+        Contempt: "輕蔑",
+        Contentment: "滿足",
+        Craving: "渴望",
+        Desire: "慾望",
+        Disappointment: "失望",
+        Disgust: "厭惡",
+        Distress: "痛苦",
+        Doubt: "懷疑",
+        Ecstasy: "狂喜",
+        Embarrassment: "難堪",
+        "Empathic Pain": "同理心痛苦",
+        Entrancement: "著迷",
+        Envy: "嫉妒",
+        Excitement: "興奮",
+        Fear: "恐懼",
+        Guilt: "內疚",
+        Horror: "恐怖",
+        Interest: "興趣",
+        Joy: "快樂",
+        Love: "愛",
+        Nostalgia: "懷舊",
+        Pain: "疼痛",
+        Pride: "自豪",
+        Realization: "領悟",
+        Relief: "解脫",
+        Romance: "浪漫",
+        Sadness: "悲傷",
+        Satisfaction: "滿意",
+        Shame: "羞恥",
+        "Surprise (negative)": "驚訝(負面)",
+        "Surprise (positive)": "驚訝(正面)",
+        Sympathy: "憐憫",
+        Tiredness: "疲倦",
+        Triumph: "勝利",
+      };
+
+      /**
+       * 4. 視訊畫面截取、封裝、與異步 API 上傳核心實作
+       * @param {number} photoIdx 當前計數序號
+       * @param {function} done 排程放行回調函數 (Callback)
+       */
+      function captureAndUpload(photoIdx, done) {
+        const context = canvas.getContext("2d");
+        
+        // 動態將隱藏畫布的解析度與當前視訊源同步，確保圖像不失真
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        // 將視訊目前的影格像素繪製至 Canvas
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // 將畫布資料轉換為二進位 Blob（指定格式為 image/jpeg 以縮減檔案體積，加快行動網路傳輸速度）
+        canvas.toBlob(
+          async (blob) => {
+            const formData = new FormData();
+            // 建立具備高度可辨識性的命名規則，方便後端儲存與交叉稽核
+            formData.append("file", blob, `test_${testCount}_${photoIdx}.jpg`);
+            formData.append("test_id", `test ${testCount}`);
+
+            status.innerText = `正在分析第 ${photoIdx} 張照片...`;
             
-            canvas.toBlob(async (blob) => {
-                const formData = new FormData();
-                formData.append('file', blob, `test_${testCount}_${photoIdx}.jpg`);
-                formData.append('test_id', `test ${testCount}`);
+            // 【關鍵修改】使用動態主機 origin 拼湊 API URL，確保組員在任何網域 (含 ngrok 隨機網域) 下執行均能自動對接
+            const uploadUrl = window.location.origin + "/api/upload";
 
-                status.innerText = `正在分析第 ${photoIdx} 張照片...`;
-                const uploadUrl = window.location.origin + '/api/upload'; 
+            try {
+              // 發送非同步 POST 請求將二進位表單拋送至後端
+              const response = await fetch(uploadUrl, {
+                method: "POST",
+                body: formData,
+              });
+              const result = await response.json();
 
-                try {
-                    const response = await fetch(uploadUrl, { method: 'POST', body: formData });
-                    const result = await response.json();
+              // --- 情況 A：處理後端判定信心度不足，要求使用者手動校正的情況 ---
+              if (result.action === "user_selection_required") {
+                const modal = document.getElementById("emotionModal");
+                const container = document.getElementById("emotionButtonsContainer");
 
-                    if (result.action === "user_selection_required") {
-                        let optionsText = `[第 ${photoIdx} 張] 強度較低，請選擇：\n`;
-                        const keys = Object.keys(result.options);
-                        keys.forEach((name, index) => {
-                            optionsText += `${index + 1}. ${name} (${(result.options[name] * 100).toFixed(1)}%)\n`;
-                        });
+                container.innerHTML = ""; // 初始化容器，抹除上一輪遺留的舊按鈕
 
-                        const choice = prompt(optionsText);
-                        const selectedIndex = parseInt(choice) - 1;
+                // 遍歷後端回傳的前五名候選英文情緒鍵值
+                Object.keys(result.options).forEach((name) => {
+                  const btn = document.createElement("button");
+                  const scorePercent = (result.options[name] * 100).toFixed(1); // 轉為易讀的百分比格式
+                  btn.className = "emotion-btn";
 
-                        if (keys[selectedIndex]) {
-                            const manualData = new FormData();
-                            manualData.append('test_id', `test ${testCount}`);
-                            manualData.append('selected_emotion', keys[selectedIndex]);
-                            manualData.append('score', result.options[keys[selectedIndex]]);
+                  // 進行中英名稱安全映射，若對照表中找不到該欄位，則原樣呈現英文代碼避免程式死當
+                  const chineseName = emotionMap[name] || name;
+                  btn.innerText = `${chineseName} (${scorePercent}%)`;
 
-                            await fetch(window.location.origin + '/api/save_manual', { method: 'POST', body: manualData });
-                            status.innerText = `第 ${photoIdx} 張記錄成功`;
-                        }
-                    } else {
-                        status.innerText = `第 ${photoIdx} 張自動存檔完成`;
-                    }
-                } catch (err) {
-                    console.error("上傳失敗:", err);
-                } finally {
-                    if (done) done(); // 無論成功失敗，告知主流程可以繼續下一次拍照
-                }
-            }, 'image/jpeg', 0.8);
-        }
+                  // 設定使用者點擊特定校正情緒按鈕後的處理程序
+                  btn.onclick = async () => {
+                    modal.style.display = "none"; // 立即收合彈窗
+                    status.innerText = `已手動存檔：${chineseName}`;
 
+                    // 將使用者的手動選擇結果包裝成 FormData 拋送至後端特定的校正 API 路由
+                    const manualData = new FormData();
+                    manualData.append("test_id", `test ${testCount}`);
+                    // 【架構設計核心】將英文代碼寫回資料庫，以維持後期資料倉儲分析與 Tableau 等工具報表統計的標準化規格
+                    manualData.append("selected_emotion", name);
+                    manualData.append("score", result.options[name]);
+
+                    // 異步拋送校正請求
+                    await fetch(window.location.origin + "/api/save_manual", {
+                      method: "POST",
+                      body: manualData,
+                    });
+
+                    if (done) done(); // 通知主迴圈：本輪程序已全部結束，允許拍攝下一張照片
+                  };
+                  container.appendChild(btn);
+                });
+
+                modal.style.display = "flex"; // 變更樣式為 flex，優雅彈出 Heal-Care 互動視窗
+              }
+              // --- 情況 B：處理後端判定信心度充足，已執行自動存檔的情況 ---
+              else if (result.action === "auto_saved") {
+                status.innerText = `第 ${photoIdx} 張自動存檔完成`;
+                if (done) done(); // 直接放行
+              }
+            } catch (err) {
+              console.error("上傳或解讀失敗:", err);
+              if (done) done(); // 發生異常時同樣強制放行，避免前端程式陷入死鎖狀態
+            }
+          },
+          "image/jpeg",
+          0.8, // 壓縮係數設定為 80%，在畫質與網路傳輸效能間取得最佳平衡點
+        );
+      }
+
+      // 監聽測試啟動按鈕
       startBtn.addEventListener("click", runEmotionTest);
 
-      // 進入網頁自動開啟相機
+      // 當 DOM Tree 載入完成後，首要任務即自動開啟前相機串流進行預覽
       initCamera();
     </script>
   </body>
