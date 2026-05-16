@@ -1,22 +1,22 @@
-Moodanaly-project 情感辨識與照顧日誌
+# Moodanaly-project 情感辨識與照顧日誌
 
-🛠️ 1. 檔案清單與專案架構
-`init_db.sql`：本地 PostgreSQL 資料庫的環境初始化腳本。
-`requirements.txt`：Python 執行環境依賴套件清單。
-`server.py`：後端主程式 (FastAPI)，內含 Hume AI 輪詢、資料庫寫入、網域動態分流路由。
-`index.html`：前端鏡頭 4 秒定時自動拍上傳，與 Heal-Care 風格自訂繁中手動校正彈窗頁面。
-`layout_test_Gen1.html`：LINE 官方帳號圖文選單點選後，專屬開啟的「照顧日誌明細與動態圖表」頁面。
+## 🛠️ 1. 檔案清單與專案架構
+* `init_db.sql`：本地 PostgreSQL 資料庫的環境初始化腳本。
+* `requirements.txt`：Python 執行環境依賴套件清單。
+* `server.py`：後端主程式 (FastAPI)，內含 Hume AI 輪詢、資料庫寫入、網域動態分流路由。
+* `index.html`：前端鏡頭 4 秒定時自動拍上傳，與 Heal-Care 風格自訂繁中手動校正彈窗頁面。
+* `layout_test_Gen1.html`：LINE 官方帳號圖文選單點選後，專屬開啟的「照顧日誌明細與動態圖表」頁面。
 
 ---
 
-⚙️ 2. 環境配置與資料庫設定
+## ⚙️ 2. 環境配置與資料庫設定
 
-A. Hume AI 憑證位置
-開啟 `server.py`，請在第 16 行左右找到 `HUME_API_KEY` 變數，並將其替換為您團隊專屬的 Hume AI Batch API 金鑰。
+### A. Hume AI 憑證位置
+* 開啟 `server.py`，請在第 16 行左右找到 `HUME_API_KEY` 變數，並將其替換為您團隊專屬的 Hume AI Batch API 金鑰。
 
-B. PostgreSQL 資料庫建立
+### B. PostgreSQL 資料庫建立
 請在本地 PostgreSQL 資料庫中執行 `init_db.sql`，或手動執行以下語法建立資料表。請注意，為了支援彈性的多模態分析，情緒數據是以 `JSONB` 格式規格化封裝：
-sql
+```sql
 CREATE TABLE emotion_logs (
     id SERIAL PRIMARY KEY,
     test_name VARCHAR(255),
