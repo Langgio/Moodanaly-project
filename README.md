@@ -1,5 +1,3 @@
-**你只會需要readytopush的檔案**
-
 **Moodanaly-project 情感辨識與照顧日誌**
 
 *1\. 檔案清單與專案架構*
