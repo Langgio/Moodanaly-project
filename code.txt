@@ -9,7 +9,7 @@ from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import date, timedelta
+from datetime import date
 
 # 初始化 FastAPI 應用程式
 app = FastAPI()
@@ -17,7 +17,7 @@ app = FastAPI()
 # --- 1. 設定區 (環境與路徑配置) ---
 
 # Hume AI 官方 API 金鑰 (用於進行表情模型辨識)
-HUME_API_KEY = 
+HUME_API_KEY = "YRolQS4LUtijkq8V89lMsneS1PGgRZYdXlf3T64ELG73z1fa" 
 
 # 【關鍵修改】動態獲取當前執行檔案的目錄，徹底解決實體絕對路徑寫死在特定電腦的問題
 BASE_PATH = Path(__file__).parent.resolve()
@@ -224,131 +224,30 @@ async def handle_upload(file: UploadFile = File(...), test_id: str = Form(...)):
 
 @app.get("/api/today_stats")
 async def get_today_stats():
-    # 圖表與表格綜合對接專用 API：過濾出今天的所有數據，同時回傳「加總統計」與「每筆詳細時間明細」
+    #圖表對接專用 API：從 PostgreSQL 中過濾出今天的數據，進行次數累加統計並回傳
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
         
-        # 【關鍵修改】同時撈取情緒資料(JSONB)與精確的建立時間(created_at)，並依時間由新到舊排序
+        # 獲取今日日期，並利用 SQL CAST 比對 created_at 的日期部分
         today = date.today()
-        query = """
-            SELECT detected_emotions, TO_CHAR(created_at, 'HH24:MI') as log_time 
-            FROM emotion_logs 
-            WHERE CAST(created_at AS DATE) = %s
-            ORDER BY created_at DESC
-        """
+        query = "SELECT detected_emotions FROM emotion_logs WHERE CAST(created_at AS DATE) = %s"
         cur.execute(query, (today,))
         rows = cur.fetchall()
         
-        cur.close()
-        conn.close()
-        
-        # 1. 計算圖表所需的累加統計 (summary)
-        stats_summary = {}
-        
-        # 2. 建立前端表格所需的詳細列表清單 (detail_list)
-        detail_list = []
-        
+        # 遍歷今日的所有日誌紀錄，解開 JSONB 格式並將情緒名稱累加統計次數
+        stats = {}
         for row in rows:
-            emotions = row[0]  # row[0] 為該筆情緒 JSON 物件，如 {"Calmness": 0.854}
-            log_time = row[1]  # row[1] 為格式化後的字串，如 "14:25"
-            
+            emotions = row[0]  # row[0] 為一筆情緒 JSON 物件，例如 {"Calmness": 0.54}
             if emotions:
-                # 累加統計
                 for name in emotions.keys():
-                    stats_summary[name] = stats_summary.get(name, 0) + 1
-                
-                # 找出這一筆紀錄中分數最高的情緒，作為表格的主要顯示狀態
-                top_emotion = max(emotions, key=emotions.get) if emotions else "Unknown"
-                
-                detail_list.append({
-                    "time": log_time,
-                    "activity": "系統多模態情緒檢測",
-                    "emotion": top_emotion
-                })
-        
-        # 回傳複合式資料結構，完美餵飽前端的 Chart.js 與 <table>
-        return {
-            "status": "success",
-            "data": stats_summary,     # 供圓餅圖渲染，例如 {"Calmness": 3, "Joy": 1}
-            "details": detail_list     # 供下方表格跑每一筆真實時間的明細
-        }
-    except Exception as e:
-        print(f"❌ 讀取今日統計失敗: {e}")
-        return {"status": "error", "message": str(e)}
-    
-@app.get("/api/history_stats")
-async def get_history_stats():
-    # 歷史趨勢專用 API：從 PostgreSQL 中過濾出過去 30 天的數據，依日期累加並包裝成 Chart.js 規格
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        
-        # 1. 自動產生過去 30 天的日期清單 (由舊到新，例如：["04/20", "04/21", ..., "05/19"])
-        today = date.today()
-        date_list = [today - timedelta(days=i) for i in range(29, -1, -1)]
-        date_str_list = [d.strftime("%m/%d") for d in date_list]
-        
-        # 2. 向資料庫查詢過去 30 天內的所有紀錄
-        start_date = date_list[0]
-        query = """
-            SELECT CAST(created_at AS DATE) as log_date, detected_emotions 
-            FROM emotion_logs 
-            WHERE CAST(created_at AS DATE) >= %s 
-            ORDER BY log_date ASC
-        """
-        cur.execute(query, (start_date,))
-        rows = cur.fetchall()
+                    stats[name] = stats.get(name, 0) + 1
         
         cur.close()
         conn.close()
-        
-        # 3. 建立大結構，用來儲存每天每種情緒出現的總次數
-        # 結構範例: {"Calmness": {"05/18": 3, "05/19": 5}, "Joy": {"05/18": 1, "05/19": 0}}
-        emotion_trends = {}
-        
-        for row in rows:
-            log_date_str = row[0].strftime("%m/%d") # 轉成 "MM/DD" 格式
-            emotions_dict = row[1]                      # 解開 JSONB 物件
-            
-            if emotions_dict:
-                for emotion in emotions_dict.keys():
-                    # 如果這個情緒第一次出現，先初始化過去 30 天的次數全部為 0
-                    if emotion not in emotion_trends:
-                        emotion_trends[emotion] = {d: 0 for d in date_str_list}
-                    
-                    # 該日期對應的情緒累加 1 次
-                    if log_date_str in emotion_trends[emotion]:
-                        emotion_trends[emotion][log_date_str] += 1
-                        
-        # 4. 將資料包裝成前端 Chart.js 線條 (datasets) 所需的格式
-        # 質感配色盤，供多條情緒折線自動輪替
-        color_palette = ["#3b77c4", "#4caf50", "#f44336", "#ff9800", "#9c27b0", "#00bcd4"]
-        datasets = []
-        
-        for idx, (emotion_name, date_counts) in enumerate(emotion_trends.items()):
-            # 依據產生的 30 天日期順序，把每天的次數抽出來變成一個陣列 [0, 3, 5, 2...]
-            data_points = [date_counts[d] for d in date_str_list]
-            
-            # 卡控：只有這一個月內「至少出現過 1 次」的情緒才幫它畫線，避免畫面塞滿沒發生的空線
-            if sum(data_points) > 0:
-                datasets.append({
-                    "label": emotion_name,
-                    "data": data_points,
-                    "borderColor": color_palette[idx % len(color_palette)],
-                    "backgroundColor": color_palette[idx % len(color_palette)],
-                    "fill": False
-                })
-                
-        # 5. 回傳給前端進行 Chart.js 渲染
-        return {
-            "status": "success",
-            "labels": date_str_list, # X 軸：近 30 天日期陣列
-            "datasets": datasets     # Y 軸：各線條數據
-        }
-        
+        # 回傳統計結果供前端 Chart.js 動態渲染圓餅圖
+        return {"status": "success", "data": stats}
     except Exception as e:
-        print(f"❌ 讀取歷史統計發生錯誤: {e}")
         return {"status": "error", "message": str(e)}
 
 # 專案主程式進入點：在本地 127.0.0.1:8000 埠號啟動 Uvicorn 異步伺服器

@@ -30,14 +30,13 @@
         -webkit-font-smoothing: antialiased;
       }
 
-      /* 行動裝置 iPhone 底部安全區塊(Safe Area)適配，防止畫面遭黑條遮擋 */
+      /* 行動裝置 iPhone 底部安全區塊(Safe Area)適配 */
       @supports (padding-bottom: env(safe-area-inset-bottom)) {
         body {
           padding-bottom: env(safe-area-inset-bottom);
         }
       }
 
-      /* 頁面基準容器：改為 Flex 直式排列，撐滿螢幕 */
       .screen {
         display: flex;
         flex-direction: column;
@@ -47,7 +46,6 @@
         overflow: hidden;
       }
 
-      /* 頂部導覽列樣式 */
       .header {
         background: var(--card-bg);
         padding: 15px 20px;
@@ -63,7 +61,6 @@
         color: var(--text-color);
       }
 
-      /* 功能頁籤 (Tabs) 選項鈕容器 */
       .tabs {
         display: flex;
         background: var(--card-bg);
@@ -85,20 +82,17 @@
         transition: all 0.2s;
       }
 
-      /* 激活狀態頁籤樣式：切換為深藍背景、白字 */
       .tab-btn.active-tab {
         background: var(--primary-color);
         color: white;
       }
 
-      /* 日誌內容滾動區 */
       .log-content {
         flex: 1;
         overflow-y: auto;
         padding: 20px;
       }
 
-      /* 圖表與表格卡片樣式 */
       .chart-card, .table-card {
         background: var(--card-bg);
         padding: 20px;
@@ -110,7 +104,7 @@
 
       .table-card {
         overflow: hidden;
-        padding: 0; /* 表格內距由 Th/Td 控制 */
+        padding: 0;
       }
 
       .table-header {
@@ -142,11 +136,26 @@
         border-bottom: none;
       }
 
-      /* 圓餅圖外層容器，給予固定高度以防 Chart.js 爆版 */
       .chart-container {
         position: relative;
         height: 260px;
         width: 100%;
+      }
+
+      /* 專屬空狀態提示樣式 */
+      .empty-state {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        color: var(--text-light);
+        font-size: 1.1rem;
+        font-weight: 500;
+      }
+      .empty-state span {
+        font-size: 3rem;
+        margin-bottom: 15px;
       }
     </style>
   </head>
@@ -167,10 +176,15 @@
 
       <div id="log-container" class="log-content">
         <div id="content-today">
-          <div class="chart-card">
+          <div id="today-chart-card" class="chart-card">
             <div class="chart-container">
               <canvas id="pieChart"></canvas>
             </div>
+          </div>
+
+          <div id="today-empty" class="chart-card empty-state">
+            <span>📊</span>
+            今天還沒有資料，請先啟動鏡頭測試。
           </div>
           
           <div class="table-card">
@@ -183,25 +197,32 @@
                   <th>精準情緒狀態</th>
                 </tr>
               </thead>
-              <tbody id="today-table-body">
-                </tbody>
+              <tbody id="today-table-body"></tbody>
             </table>
           </div>
         </div>
 
         <div id="content-history" style="display: none">
-          <div class="chart-card" style="text-align: center; color: var(--text-light); padding: 40px 20px;">
-            📈 歷史趨勢大數據整合中，敬請期待。
+          <div id="history-chart-card" class="chart-card">
+            <div class="chart-container" style="height: 300px;">
+              <canvas id="lineChart"></canvas>
+            </div>
+          </div>
+
+          <div id="history-empty" class="chart-card empty-state">
+            <span>📈</span>
+            過去一個月內暫無任何歷史分析紀錄。
           </div>
         </div>
       </div>
     </section>
 
     <script>
-      // 全局圖表實例變數，方便後續管理或銷毀
+      // 全局圖表實例控制變數
       let pieChart;
+      let lineChart;
 
-      // 系統核心情緒英文代碼與繁體中文在地化對照表 (確保與相機端對齊)
+      // 核心情緒在地化對照表
       const emotionMap = {
         Admiration: "讚賞", Adoration: "崇拜", "Aesthetic Appreciation": "審美感",
         Amusement: "愉悅", Anger: "憤怒", Anxiety: "焦慮", Awe: "敬畏",
@@ -217,15 +238,12 @@
         Sympathy: "憐憫", Tiredness: "疲倦", Triumph: "勝利"
       };
 
-      // 頁面載入完成後，立刻向後端 API 調取真實資料庫數據
+      // 進入頁面預覽首刷今日數據
       window.addEventListener("load", () => {
         initTodayCharts();
       });
 
-      /**
-       * 1. 頁籤切換邏輯 
-       * @param {string} type 'today' 或 'history'
-       */
+      // 頁籤切換核心分流器
       function switchTab(type) {
         const isToday = type === "today";
         document.getElementById("content-today").style.display = isToday ? "block" : "none";
@@ -233,105 +251,159 @@
         
         document.getElementById("tab-today").classList.toggle("active-tab", isToday);
         document.getElementById("tab-history").classList.toggle("active-tab", !isToday);
-      }
 
-      /**
-       * 2. 核心異步資料獲取與 Chart.js 圖表渲染
-       */
-      async function initTodayCharts() {
-        // 防止重複初始化引發 Canvas 覆蓋除錯噴錯
-        if (pieChart) pieChart.destroy();
-
-        try {
-          // 【關鍵修改】動態拼接當前主機 origin，確保組員拿去整合時網域自動對接不噴錯
-          const apiUrl = window.location.origin + "/api/today_stats";
-          const response = await fetch(apiUrl);
-          const result = await response.json();
-
-          if (result.status === "success" && result.data) {
-            const rawData = result.data; // 格式如: {"Calmness": 3, "Joy": 1}
-            
-            // 解析數據：將後端英文標籤透過對照表對映為在地化中文標籤
-            const labels = Object.keys(rawData).map(engName => emotionMap[engName] || engName);
-            const dataValues = Object.values(rawData);
-            
-            // 檢查今天資料庫是否有數據
-            if (dataValues.length === 0) {
-              document.getElementById("today-table-body").innerHTML = `
-                <tr>
-                  <td colspan="3" style="text-align:center; color:var(--text-light);">今日暫無感測紀錄，請先啟動鏡頭測試。</td>
-                </tr>`;
-              return;
-            }
-
-            // A. 開始繪製今日情緒圓餅圖
-            const ctxPie = document.getElementById("pieChart").getContext("2d");
-            pieChart = new Chart(ctxPie, {
-              type: "pie",
-              data: {
-                labels: labels,
-                datasets: [{
-                  data: dataValues,
-                  // 柔和高質感的 UI 調色盤：深藍、亮黃、綠色、紅色、灰色循環
-                  backgroundColor: ["#3b77c4", "#dfff37", "#4caf50", "#f44336", "#9c27b0", "#ff9800", "#777777"],
-                  borderWidth: 2,
-                  borderColor: "#ffffff"
-                }]
-              },
-              options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: {
-                    position: "bottom",
-                    labels: { boxWidth: 12, padding: 15, font: { size: 12 } }
-                  },
-                  title: {
-                    display: true,
-                    text: "今日情緒分佈即時統計",
-                    font: { size: 15, weight: "bold" },
-                    color: "#1a1a1a",
-                    padding: { bottom: 10 }
-                  }
-                }
-              }
-            });
-
-            // B. 同時動態更新下方活動記錄表格
-            updateLogTable(rawData);
-          }
-        } catch (err) {
-          console.error("無法從後端讀取統計資料:", err);
-          document.getElementById("today-table-body").innerHTML = `
-            <tr>
-              <td colspan="3" style="text-align:center; color:var(--danger-color);">⚠️ 資料庫連線異常，無法載入日誌。</td>
-            </tr>`;
+        // 如果切換到歷史趨勢，則發動異步讀取近一個月數據
+        if (!isToday) {
+          initHistoryCharts();
         }
       }
 
       /**
-       * 3. 輔助函式：動態將資料庫解算出的累加次數塞入網頁 Table
-       * @param {object} rawData 情緒累加字典物件
+       * 1. 處理今日統計資料渲染
        */
+      async function initTodayCharts() {
+  if (pieChart) pieChart.destroy();
+
+  try {
+    const response = await fetch(window.location.origin + "/api/today_stats");
+    const result = await response.json();
+
+    const chartCard = document.getElementById("today-chart-card");
+    const emptyBox = document.getElementById("today-empty");
+
+    // 修改卡控條件：確認 data 裡面有沒有情緒加總鍵值
+    if (result.status === "success" && result.data && Object.keys(result.data).length > 0) {
+      chartCard.style.display = "block";
+      emptyBox.style.display = "none";
+
+      const rawData = result.data;
+      const labels = Object.keys(rawData).map(engName => emotionMap[engName] || engName);
+      const dataValues = Object.values(rawData);
+
+      const ctxPie = document.getElementById("pieChart").getContext("2d");
+      pieChart = new Chart(ctxPie, {
+        type: "pie",
+        data: {
+          labels: labels,
+          datasets: [{
+            data: dataValues,
+            backgroundColor: ["#3b77c4", "#dfff37", "#4caf50", "#f44336", "#9c27b0", "#ff9800", "#777777"],
+            borderWidth: 2,
+            borderColor: "#ffffff"
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "bottom", labels: { boxWidth: 12, padding: 15 } },
+            title: { display: true, text: "今日情緒分佈即時統計", font: { size: 15, weight: "bold" } }
+          }
+        }
+      });
+
+      // 【重要】改用後端回傳的真實細節細項 (details) 來渲染表格
+      updateLogTable(result.details);
+    } else {
+      // 完全沒有資料時顯示「今天還沒有資料」提示
+      chartCard.style.display = "none";
+      emptyBox.style.display = "flex";
+      document.getElementById("today-table-body").innerHTML = `
+        <tr>
+          <td colspan="3" style="text-align:center; color:var(--text-light); padding: 30px 0;">今天還沒有資料，請先啟動鏡頭測試。</td>
+        </tr>`;
+    }
+  } catch (err) {
+    console.error("無法撈取今日資料:", err);
+  }
+}
+
+// 渲染活動紀錄表格的輔補函式
+function updateLogTable(detailsArray) {
+  const tbody = document.getElementById("today-table-body");
+  tbody.innerHTML = ""; // 清空舊版面
+
+  // 這裡的 detailsArray 是後端過濾出來的每一筆真實時間資料
+  detailsArray.forEach(item => {
+    const chineseName = emotionMap[item.emotion] || item.emotion;
+    tbody.innerHTML += `
+      <tr>
+        <td>${item.time}</td>
+        <td>${item.activity}</td>
+        <td><strong>${chineseName}</strong></td>
+      </tr>`;
+  });
+}
+
+      /**
+       * 2. 處理歷史趨勢（近一個月折線圖）資料渲染
+       */
+      async function initHistoryCharts() {
+        if (lineChart) lineChart.destroy();
+
+        try {
+          // 向後端請求最近一個月的歷史折線統計數據
+          const response = await fetch(window.location.origin + "/api/history_stats");
+          const result = await response.json();
+
+          const chartCard = document.getElementById("history-chart-card");
+          const emptyBox = document.getElementById("history-empty");
+
+          // 預期後端回傳格式：{ status: "success", labels: ["05/01", "05/02"...], datasets: [{label: "冷靜", data: [5, 4...]}] }
+          if (result.status === "success" && result.labels && result.labels.length > 0) {
+            chartCard.style.display = "block";
+            emptyBox.style.display = "none";
+
+            const ctxLine = document.getElementById("lineChart").getContext("2d");
+            lineChart = new Chart(ctxLine, {
+              type: "line",
+              data: {
+                labels: result.labels, // 後端給的近30天日期陣列
+                datasets: result.datasets.map(dataset => ({
+                  ...dataset,
+                  label: emotionMap[dataset.label] || dataset.label, // 自動將線條情緒名稱翻成中文
+                  tension: 0.3, // 讓折線帶有平滑弧度，視覺感更高級
+                  borderWidth: 3,
+                  pointRadius: 2
+                }))
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                plugins: {
+                  title: { display: true, text: "最近一個月情緒起伏趨勢圖", font: { size: 15, weight: "bold" } },
+                  legend: { position: "bottom", labels: { boxWidth: 10 } }
+                },
+                scales: {
+                  y: { beginAtZero: true, title: { display: true, text: "感測次數" } },
+                  x: { grid: { display: false } }
+                }
+              }
+            });
+          } else {
+            // 一個月內完全沒歷史紀錄
+            chartCard.style.display = "none";
+            emptyBox.style.display = "flex";
+          }
+        } catch (err) {
+          console.error("無法撈取歷史趨勢:", err);
+        }
+      }
+
       function updateLogTable(rawData) {
         const tbody = document.getElementById("today-table-body");
-        tbody.innerHTML = ""; // 清空上一輪舊殘留
-
-        // 取得當前時間字串作為 Mock 時間顯示
+        tbody.innerHTML = "";
         const currentTime = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
 
         Object.entries(rawData).forEach(([engName, count]) => {
           const chineseName = emotionMap[engName] || engName;
-          
-          // 建立一列新 Tr 塞入表格
-          const rowHtml = `
+          tbody.innerHTML += `
             <tr>
               <td>${currentTime}</td>
               <td>系統多模態情緒檢測</td>
               <td><strong>${chineseName}</strong> (本日累計 ${count} 次)</td>
-            </tr>
-          `;
-          tbody.innerHTML += rowHtml;
+            </tr>`;
         });
       }
     </script>
